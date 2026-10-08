@@ -210,3 +210,18 @@ def test_demo_stays_active_and_reseeding_refreshes_timestamps(monkeypatch, tmp_p
         renewed = client.get("/api/painel").json()
         atlas = next(item for item in renewed["execucoes"] if item["session_id"] == "demo-atlas" and not item["pai_chave"])
         assert atlas["criado_em"] != original_start
+
+
+def test_stop_without_start_and_type_is_not_a_subagent(monkeypatch, tmp_path):
+    monkeypatch.setenv("AI_OPERATIONS_ROOM_DATA_DIR", str(tmp_path))
+    add_events(
+        {"id": "s", "evento": "SessionStart", "session_id": "s", "cwd": "/work", "t": at(-4)},
+        {"id": "p", "evento": "UserPromptSubmit", "session_id": "s", "cwd": "/work", "t": at(-3)},
+        {"id": "ghost", "evento": "SubagentStop", "session_id": "s", "agent_id": "interno", "agent_type": "", "cwd": "/work", "t": at(-2), "background_tasks": []},
+        {"id": "real", "evento": "SubagentStop", "session_id": "s", "agent_id": "tardio", "agent_type": "Explore", "cwd": "/work", "t": at(-1)},
+    )
+    with TestClient(app) as client:
+        agents = {a["chave"]: a for a in client.get("/api/sessoes/s/agentes").json()["agentes"]}
+        assert "agent:interno" not in agents
+        assert agents["agent:tardio"]["estado"] == "concluida"
+        assert agents["session:s"]["estado"] == "trabalhando"

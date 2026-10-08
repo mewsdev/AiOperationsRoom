@@ -68,6 +68,12 @@ def apply(con: sqlite3.Connection, event: dict) -> None:
         _set_main(con, event, "delegando")
         _upsert(con, event, state="trabalhando", parent=main_key(event["session_id"]))
     elif name == "SubagentStop":
+        known = con.execute("SELECT 1 FROM execucao WHERE chave = ?", (key_for(event),)).fetchone()
+        if not known and not _value(event, "agent_type"):
+            # O Claude Code também emite SubagentStop, sem agent_type e sem
+            # SubagentStart, para execuções internas que não são subagentes
+            # do usuário. Ignorá-las evita bonecos "subagente" fantasmas.
+            return
         if not con.execute("SELECT 1 FROM execucao WHERE chave = ?", (main_key(event["session_id"]),)).fetchone():
             _set_main(con, event, "aguardando")
         _upsert(con, event, state="concluida", parent=main_key(event["session_id"]), ended_by="SubagentStop")
