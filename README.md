@@ -38,6 +38,26 @@ Para executar esse script em cada **login** do Windows:
 
 O script inicia apenas o servidor real. A demonstração abaixo usa dados separados e deve ser aberta com `demo --serve`. [A Microsoft documenta a pasta `shell:startup` para aplicativos iniciados no login](https://support.microsoft.com/en-gb/windows/experience/startup-boot/configure-startup-applications-in-windows).
 
+### Linux
+
+Os mesmos comandos do início rápido funcionam no Linux. Para iniciar o servidor em segundo plano e abrir o navegador:
+
+```bash
+scripts/start-room.sh
+```
+
+O script usa a porta 8765, espera a API responder e abre a sala com `xdg-open`. Use `--port 8898` para outra porta e `--no-browser` para não abrir o navegador. O log fica em `~/.ai-operations-room/server.log`.
+
+Para iniciar o servidor a cada login, registre um serviço de usuário do systemd:
+
+```bash
+scripts/autostart-linux.sh install            # aceita --port 8898
+scripts/autostart-linux.sh status
+scripts/autostart-linux.sh remove
+```
+
+O serviço aponta para o caminho atual do repositório; se mover a pasta, execute `remove` antes e `install` na nova localização. Os logs ficam em `journalctl --user -u ai-operations-room.service`.
+
 ## Demonstração
 
 O modo demo cria uma fila e um banco separados em `~/.ai-operations-room-demo`, sem acessar dados reais ou precisar do Claude Code. Projetos cadastrados na demo não aparecem no servidor real, e vice-versa.
@@ -74,7 +94,7 @@ Estou compartilhando também 2 agentes que eu utilizo nos meus projetos de traba
 ## Desenvolvimento
 
 ```powershell
-.venv\Scripts\python.exe -m pytest -q --basetemp=.test-temp
+uv run pytest -q --basetemp=.test-temp
 node --check frontend/app.js
 node --test tests/js/pixel.test.js
 ```
@@ -84,7 +104,7 @@ Consulte [ARCHITECTURE.md](ARCHITECTURE.md), [DEVELOPMENT.md](DEVELOPMENT.md) e 
 ## Limites atuais
 
 - A interface consulta a API a cada quatro segundos.
-- Esta versão é destinada somente ao Windows. macOS e Linux não foram validados; no macOS, a detecção de sessões órfãs ainda não funciona. Em 08/10/2026, uma sessão real do Claude Code com subagente Explore foi capturada no Windows, e a API exibiu a filha concluída e o principal trabalhando novamente.
+- Esta versão foi validada no Windows e no Linux (Ubuntu 24.04). O macOS não foi validado; nele, a detecção de sessões órfãs ainda não funciona. Em 08/10/2026, uma sessão real do Claude Code com subagente Explore foi capturada no Windows, e a API exibiu a filha concluída e o principal trabalhando novamente.
 - O suporte de hooks foi validado com o formato documentado do Claude Code. O registro assistido usa o arquivo global de configurações do usuário; configurações gerenciadas pela organização podem impedir hooks locais.
 - O serviço é local e não fornece autenticação ou acesso remoto.
 
