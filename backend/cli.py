@@ -131,11 +131,11 @@ def seed_demo(path: Path) -> None:
     print(f"Dados fictícios criados em {path}")
 
 
-def serve(data_dir: str | None, port: int = 8765) -> None:
+def serve(data_dir: str | None, port: int = 8765, host: str = "127.0.0.1") -> None:
     if data_dir:
         os.environ["AI_OPERATIONS_ROOM_DATA_DIR"] = data_dir
     import uvicorn
-    uvicorn.run("backend.api:app", host="127.0.0.1", port=port)
+    uvicorn.run("backend.api:app", host=host, port=port)
 
 
 def main() -> int:
@@ -148,9 +148,11 @@ def main() -> int:
     demo.add_argument("--data-dir", type=Path, default=Path.home() / ".ai-operations-room-demo")
     demo.add_argument("--serve", action="store_true")
     demo.add_argument("--port", type=int, default=8765)
+    demo.add_argument("--host", default=os.environ.get("AI_OPERATIONS_ROOM_HOST", "127.0.0.1"))
     server = commands.add_parser("serve")
     server.add_argument("--data-dir")
     server.add_argument("--port", type=int, default=8765)
+    server.add_argument("--host", default=os.environ.get("AI_OPERATIONS_ROOM_HOST", "127.0.0.1"))
     args = parser.parse_args()
     if args.action == "hooks-install":
         install_hooks(args.settings)
@@ -159,11 +161,11 @@ def main() -> int:
     elif args.action == "demo":
         seed_demo(args.data_dir)
         if args.serve:
-            serve(str(args.data_dir), args.port)
+            serve(str(args.data_dir), args.port, args.host)
         else:
             print("Use `python -m backend.cli demo --serve` para abrir a demonstração.")
     else:
-        serve(args.data_dir, args.port)
+        serve(args.data_dir, args.port, args.host)
     return 0
 
 

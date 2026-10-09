@@ -8,6 +8,8 @@ Uma sala local para acompanhar sessões e subagentes do Claude Code. O aplicativ
 - [`uv` instalado](https://docs.astral.sh/uv/getting-started/installation/) e disponível no terminal
 - Claude Code, somente para acompanhar sessões reais
 
+Prefere não instalar `uv` e as dependências? Rode o servidor com Docker: veja [DOCKER.md](DOCKER.md). O hook continua precisando de Python 3 no host.
+
 ## Início rápido
 
 ```powershell
@@ -38,6 +40,19 @@ Para executar esse script em cada **login** do Windows:
 
 O script inicia apenas o servidor real. A demonstração abaixo usa dados separados e deve ser aberta com `demo --serve`. [A Microsoft documenta a pasta `shell:startup` para aplicativos iniciados no login](https://support.microsoft.com/en-gb/windows/experience/startup-boot/configure-startup-applications-in-windows).
 
+### Executar com Docker
+
+Também é possível rodar o servidor em um container, mantendo o hook no host. Veja [DOCKER.md](DOCKER.md). Resumo para Linux:
+
+```bash
+cp .env.example .env            # ajuste AIOR_UID/AIOR_GID com `id -u` e `id -g`
+mkdir -p ~/.ai-operations-room
+python3 -m backend.cli hooks-install
+docker compose -f docker-compose.yml -f docker-compose.linux.yml up -d --build
+```
+
+No Windows/macOS (Docker Desktop), use somente `docker compose up -d --build`.
+
 ## Demonstração
 
 O modo demo cria uma fila e um banco separados em `~/.ai-operations-room-demo`, sem acessar dados reais ou precisar do Claude Code. Projetos cadastrados na demo não aparecem no servidor real, e vice-versa.
@@ -48,7 +63,7 @@ uv run python -m backend.cli demo --serve
 
 Abra `http://127.0.0.1:8765` e interrompa o processo quando terminar. Para apenas gerar os dados fictícios, omita `--serve`. Ao executar `demo` novamente, os eventos e horários fictícios são renovados; sessões da demo não são classificadas como órfãs por falta de PID.
 
-Use `--port 8876` em qualquer comando de servidor quando a porta padrão já estiver ocupada.
+Use `--port 8876` em qualquer comando de servidor quando a porta padrão já estiver ocupada. `--host` (ou `AI_OPERATIONS_ROOM_HOST`) muda o endereço de escuta; o padrão é `127.0.0.1`.
 
 ## Hooks do Claude Code
 
@@ -79,7 +94,7 @@ node --check frontend/app.js
 node --test tests/js/pixel.test.js
 ```
 
-Consulte [ARCHITECTURE.md](ARCHITECTURE.md), [DEVELOPMENT.md](DEVELOPMENT.md) e [HANDOFF.md](HANDOFF.md) para decisões e pontos de extensão.
+Consulte [ARCHITECTURE.md](ARCHITECTURE.md), [DEVELOPMENT.md](DEVELOPMENT.md), [DOCKER.md](DOCKER.md) e [HANDOFF.md](HANDOFF.md) para decisões e pontos de extensão.
 
 ## Limites atuais
 

@@ -1,0 +1,20 @@
+services:
+  room:
+    build: .
+    image: ai-operations-room:latest
+    container_name: ai-operations-room
+    restart: unless-stopped
+    # Mesmo usuário do host: o hook (fora do container) e o servidor gravam na mesma pasta.
+    user: "${AIOR_UID:-1000}:${AIOR_GID:-1000}"
+    ports:
+      - "127.0.0.1:${AIOR_PORT:-8765}:8765"
+    volumes:
+      - "${AIOR_DATA_DIR:-${HOME}/.ai-operations-room}:/data"
+
+  demo:
+    build: .
+    image: ai-operations-room:latest
+    profiles: ["demo"]
+    ports:
+      - "127.0.0.1:${AIOR_PORT:-8765}:8765"
+    command: ["python", "-m", "backend.cli", "demo", "--serve", "--data-dir", "/tmp/demo"]

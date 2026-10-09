@@ -1,0 +1,10 @@
+# Somente Docker Engine no Linux: compartilha a tabela de processos do host para que a
+# reconciliação confira os PIDs registrados em ~/.claude/sessions. No Docker Desktop
+# (Windows/macOS) esses PIDs não existem dentro da VM e toda sessão viraria órfã.
+services:
+  room:
+    pid: host
+    environment:
+      AI_OPERATIONS_ROOM_SESSIONS_DIR: /claude-sessions
+    volumes:
+      - "${AIOR_SESSIONS_DIR:-${HOME}/.claude/sessions}:/claude-sessions:ro"

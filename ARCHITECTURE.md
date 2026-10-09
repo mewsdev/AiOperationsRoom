@@ -19,4 +19,4 @@ O painel conta execuções em uma janela selecionável de 6, 12 ou 24 horas. A s
 
 ## Privacidade e rede
 
-O backend só escuta em `127.0.0.1`. O hook filtra campos conhecidos de conteúdo e registra somente metadados necessários para a projeção. Não há envio de dados para serviços externos.
+O backend escuta em `127.0.0.1` por padrão. No Docker ele escuta em `0.0.0.0` dentro do container, mas a porta só é publicada em `127.0.0.1` do host ([DOCKER.md](DOCKER.md)). O hook filtra campos conhecidos de conteúdo e registra somente metadados necessários para a projeção. Não há envio de dados para serviços externos.
