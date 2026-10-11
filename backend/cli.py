@@ -25,13 +25,35 @@ def command() -> str:
     return f"& {invocation}" if os.name == "nt" else invocation
 
 
-def _our_hook(item: dict) -> bool:
+def _parse(item: dict) -> re.Match | None:
     value = item.get("command")
     if not isinstance(value, str):
-        return False
-    match = re.fullmatch(r'\s*(?:&\s*)?"[^"]+"\s+"([^"]+)"\s*', value)
-    return bool(match and os.path.normcase(os.path.normpath(match.group(1))) ==
+        return None
+    return re.fullmatch(r'\s*(?:&\s*)?"([^"]+)"\s+"([^"]+)"\s*', value)
+
+
+def _our_hook(item: dict) -> bool:
+    match = _parse(item)
+    return bool(match and os.path.normcase(os.path.normpath(match.group(2))) ==
                 os.path.normcase(os.path.normpath(str(ROOT / "hooks" / "capture.py"))))
+
+
+def hook_warning(path: Path) -> str | None:
+    """Explain why events will not arrive, if the registered hook cannot run."""
+    try:
+        hooks = load_settings(path).get("hooks", {})
+    except (OSError, ValueError):
+        return None
+    ours = [item for groups in hooks.values() if isinstance(groups, list)
+            for group in groups if isinstance(group, dict)
+            for item in group.get("hooks", []) if isinstance(item, dict) and _our_hook(item)]
+    if not ours:
+        return "Hooks não registrados: execute `python -m backend.cli hooks-install` para capturar sessões."
+    missing = sorted({m.group(1) for m in map(_parse, ours) if not Path(m.group(1)).exists()})
+    if missing:
+        return (f"O Python registrado no hook não existe mais ({', '.join(missing)}). "
+                "Execute `python -m backend.cli hooks-install` novamente.")
+    return None
 
 
 def load_settings(path: Path) -> dict:
@@ -163,6 +185,9 @@ def main() -> int:
         else:
             print("Use `python -m backend.cli demo --serve` para abrir a demonstração.")
     else:
+        warning = hook_warning(settings_path())
+        if warning:
+            print(f"Aviso: {warning}", file=sys.stderr)
         serve(args.data_dir, args.port)
     return 0
 

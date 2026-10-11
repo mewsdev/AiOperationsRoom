@@ -11,6 +11,10 @@ from pathlib import Path
 
 from backend.config import data_dir
 
+# Subagents emit no hook while working, so a delegating session gets more time.
+STALE = timedelta(minutes=10)
+STALE_DELEGATING = timedelta(minutes=60)
+
 
 def sessions_dir() -> Path:
     return Path(os.environ.get("AI_OPERATIONS_ROOM_SESSIONS_DIR") or Path.home() / ".claude" / "sessions")
@@ -24,7 +28,16 @@ def process_alive(pid: object) -> bool:
     if number <= 0:
         return False
     if sys.platform != "win32":
-        return Path(f"/proc/{number}").exists()
+        # Signal 0 only checks existence; macOS has no /proc.
+        try:
+            os.kill(number, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except OSError:
+            return False
+        return True
 
     import ctypes
     from ctypes import wintypes
@@ -65,13 +78,14 @@ def living_sessions() -> dict[str, bool]:
 
 def reconcile(con: sqlite3.Connection, *, living: dict[str, bool] | None = None,
               now: datetime | None = None) -> int:
-    """Close all active runs in a dead session; unknown sessions expire after ten minutes."""
+    """Close all active runs in a dead session; unknown sessions expire after a quiet period."""
     living = living_sessions() if living is None else living
     now = now or datetime.now(timezone.utc)
-    cutoff = now - timedelta(minutes=10)
     demo_mode = (data_dir() / ".demo-mode").exists()
     rows = con.execute(
-        "SELECT session_id, MAX(atualizado_em) AS ultimo FROM execucao GROUP BY session_id"
+        "SELECT session_id, MAX(atualizado_em) AS ultimo, "
+        "MAX(pai_chave IS NOT NULL AND estado IN ('trabalhando', 'delegando', 'aguardando')) AS delegando "
+        "FROM execucao GROUP BY session_id"
     ).fetchall()
     dead = []
     for row in rows:
@@ -85,6 +99,7 @@ def reconcile(con: sqlite3.Connection, *, living: dict[str, bool] | None = None,
         except (AttributeError, ValueError):
             continue
         status = living.get(row["session_id"])
+        cutoff = now - (STALE_DELEGATING if row["delegando"] else STALE)
         if status is False or (status is None and last_dt < cutoff):
             dead.append(row["session_id"])
     count = 0

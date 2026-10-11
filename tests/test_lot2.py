@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -34,7 +35,7 @@ def test_projection_tracks_agents_and_session_end(monkeypatch, tmp_path):
         {"id": "2", "evento": "SubagentStart", "session_id": "one", "agent_id": "a", "agent_type": "Explore", "cwd": "/work/one", "t": at(-2)},
         {"id": "3", "evento": "SessionEnd", "session_id": "one", "cwd": "/work/one", "reason": "other", "t": at(-1)},
     )
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         panel = client.get("/api/painel").json()
         states = {item["chave"]: item["estado"] for item in panel["execucoes"]}
         assert states == {"session:one": "concluida", "agent:a": "concluida"}
@@ -45,7 +46,7 @@ def test_ingestion_is_idempotent_and_late_start_does_not_reopen_agent(monkeypatc
     monkeypatch.setenv("AI_OPERATIONS_ROOM_DATA_DIR", str(tmp_path))
     stopped = {"id": "stop", "evento": "SubagentStop", "session_id": "one", "agent_id": "a", "agent_type": "Explore", "cwd": "/work/one", "t": "2026-10-07T10:02:00+00:00"}
     add_events(stopped, stopped, {"id": "start", "evento": "SubagentStart", "session_id": "one", "agent_id": "a", "agent_type": "Explore", "cwd": "/work/one", "t": "2026-10-07T10:01:00+00:00"})
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         agents = client.get("/api/sessoes/one/agentes").json()["agentes"]
         agent = next(item for item in agents if item["agent_id"] == "a")
         assert agent["estado"] == "concluida"
@@ -72,7 +73,7 @@ def test_stop_interrupts_missing_child_and_does_not_delegate_shell(monkeypatch, 
         {"id": "child", "evento": "SubagentStart", "session_id": "s", "agent_id": "a", "cwd": "/work", "t": at(-2)},
         {"id": "stop", "evento": "Stop", "session_id": "s", "cwd": "/work", "background_tasks": [{"id": "shell-1", "type": "shell"}], "t": at(-1)},
     )
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         agents = {a["chave"]: a for a in client.get("/api/sessoes/s/agentes").json()["agentes"]}
         assert agents["agent:a"]["estado"] == "concluida"
         assert agents["agent:a"]["origem_encerramento"] == "interrompida"
@@ -85,7 +86,7 @@ def test_child_stop_returns_main_to_work_and_missing_list_keeps_child(monkeypatc
         {"id": "start", "evento": "SubagentStart", "session_id": "s", "agent_id": "a", "cwd": "/work", "t": at(-3)},
         {"id": "stop", "evento": "Stop", "session_id": "s", "cwd": "/work", "t": at(-2)},
     )
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         agents = {a["chave"]: a for a in client.get("/api/sessoes/s/agentes").json()["agentes"]}
         assert agents["agent:a"]["estado"] == "trabalhando"
         assert agents["session:s"]["estado"] == "delegando"
@@ -107,7 +108,7 @@ def test_window_ghost_and_active_session_count(monkeypatch, tmp_path):
         {"id": "short-child", "evento": "SubagentStart", "session_id": "short", "agent_id": "quick", "cwd": "/work", "t": at(-2)},
         {"id": "short-end", "evento": "SessionEnd", "session_id": "short", "cwd": "/work", "t": at(-2)},
     )
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         panel = client.get("/api/painel").json()
         assert {item["session_id"] for item in panel["execucoes"]} == {"live", "short"}
         assert len([item for item in panel["execucoes"] if item["session_id"] == "short"]) == 2
@@ -122,7 +123,7 @@ def test_reconcile_dead_pid_and_stale_unknown_session(monkeypatch, tmp_path):
         {"id": "b", "evento": "SessionStart", "session_id": "unknown", "cwd": "/work", "t": at(-11)},
         {"id": "c", "evento": "SessionStart", "session_id": "alive", "cwd": "/work", "t": at(-11)},
     )
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         client.get("/api/sessoes")
         with connect() as con:
             assert reconcile(con, living={"dead": False, "alive": True}, now=datetime.now(timezone.utc)) == 2
@@ -134,7 +135,7 @@ def test_reconcile_dead_pid_and_stale_unknown_session(monkeypatch, tmp_path):
 def test_queue_rotation_with_larger_replacement(monkeypatch, tmp_path):
     monkeypatch.setenv("AI_OPERATIONS_ROOM_DATA_DIR", str(tmp_path))
     add_events({"id": "a", "evento": "SessionStart", "session_id": "a", "cwd": "/a", "t": at(-2)})
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         assert len(client.get("/api/sessoes").json()["sessoes"]) == 1
         replacement = [
             {"id": f"new-{i}", "evento": "SessionStart", "session_id": f"new-{i}", "cwd": "/new", "t": at(-1)}
@@ -195,7 +196,7 @@ def test_install_repairs_existing_hook_without_shell(tmp_path):
 def test_demo_stays_active_and_reseeding_refreshes_timestamps(monkeypatch, tmp_path):
     monkeypatch.setenv("AI_OPERATIONS_ROOM_DATA_DIR", str(tmp_path))
     seed_demo(tmp_path)
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         first = client.get("/api/painel").json()
         atlas = next(item for item in first["execucoes"] if item["session_id"] == "demo-atlas" and not item["pai_chave"])
         original_start = atlas["criado_em"]
@@ -210,3 +211,82 @@ def test_demo_stays_active_and_reseeding_refreshes_timestamps(monkeypatch, tmp_p
         renewed = client.get("/api/painel").json()
         atlas = next(item for item in renewed["execucoes"] if item["session_id"] == "demo-atlas" and not item["pai_chave"])
         assert atlas["criado_em"] != original_start
+
+
+def test_posix_process_check_does_not_depend_on_proc(monkeypatch):
+    from backend import reconcile as module
+    calls = []
+
+    def fake_kill(pid, signal):
+        calls.append((pid, signal))
+        if pid == 111:
+            return None
+        if pid == 222:
+            raise PermissionError
+        raise ProcessLookupError
+
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+    monkeypatch.setattr(module.os, "kill", fake_kill)
+    assert module.process_alive(111) is True
+    assert module.process_alive(222) is True
+    assert module.process_alive(333) is False
+    assert calls == [(111, 0), (222, 0), (333, 0)]
+
+
+def test_api_rejects_foreign_host_header(monkeypatch, tmp_path):
+    monkeypatch.setenv("AI_OPERATIONS_ROOM_DATA_DIR", str(tmp_path))
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        assert client.get("/api/health").status_code == 200
+        assert client.get("/api/health", headers={"host": "localhost:8765"}).status_code == 200
+        assert client.get("/api/projetos", headers={"host": "attacker.example:8765"}).status_code == 400
+        response = client.post("/api/projetos", headers={"host": "attacker.example"},
+                               json={"nome": "X", "caminho_local": "/x"})
+        assert response.status_code == 400
+
+
+def test_unknown_session_with_active_subagent_gets_longer_grace(monkeypatch, tmp_path):
+    monkeypatch.setenv("AI_OPERATIONS_ROOM_DATA_DIR", str(tmp_path))
+    add_events(
+        {"id": "s1", "evento": "SessionStart", "session_id": "busy", "cwd": "/work", "t": at(-30)},
+        {"id": "s2", "evento": "SubagentStart", "session_id": "busy", "agent_id": "long", "agent_type": "Explore", "cwd": "/work", "t": at(-25)},
+        {"id": "s3", "evento": "SessionStart", "session_id": "gone", "cwd": "/work", "t": at(-70)},
+        {"id": "s4", "evento": "SubagentStart", "session_id": "gone", "agent_id": "lost", "agent_type": "Explore", "cwd": "/work", "t": at(-65)},
+    )
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        client.get("/api/sessoes")
+        with connect() as con:
+            assert reconcile(con, living={}, now=datetime.now(timezone.utc)) == 2
+        busy = {a["chave"]: a["estado"] for a in client.get("/api/sessoes/busy/agentes").json()["agentes"]}
+        gone = {a["chave"]: a["estado"] for a in client.get("/api/sessoes/gone/agentes").json()["agentes"]}
+        assert busy == {"session:busy": "delegando", "agent:long": "trabalhando"}
+        assert gone == {"session:gone": "orfa", "agent:lost": "orfa"}
+
+
+def test_event_ingested_after_orphan_detection_reopens_run(monkeypatch, tmp_path):
+    monkeypatch.setenv("AI_OPERATIONS_ROOM_DATA_DIR", str(tmp_path))
+    add_events({"id": "r1", "evento": "SessionStart", "session_id": "race", "cwd": "/work", "t": at(-5)})
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        client.get("/api/sessoes")
+        detected = datetime.now(timezone.utc)
+        with connect() as con:
+            assert reconcile(con, living={"race": False}, now=detected) == 1
+        # Written by the hook before detection, ingested after it.
+        add_events({"id": "r2", "evento": "UserPromptSubmit", "session_id": "race", "cwd": "/work", "t": at(-1)})
+        client.get("/api/sessoes")
+        main = client.get("/api/sessoes/race/agentes").json()["agentes"][0]
+        assert main["estado"] == "trabalhando"
+        assert main["atualizado_em"] == detected.isoformat(timespec="seconds")
+
+
+def test_hook_warning_reports_missing_hook_and_missing_python(tmp_path):
+    settings = tmp_path / "settings.json"
+    assert "não registrados" in cli.hook_warning(settings)
+    install_hooks(settings)
+    assert cli.hook_warning(settings) is None
+    data = json.loads(settings.read_text(encoding="utf-8"))
+    for groups in data["hooks"].values():
+        for group in groups:
+            for item in group["hooks"]:
+                item["command"] = item["command"].replace(sys.executable, str(tmp_path / "gone" / "python.exe"))
+    settings.write_text(json.dumps(data), encoding="utf-8")
+    assert "não existe mais" in cli.hook_warning(settings)

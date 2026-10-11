@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel
 
 from backend.config import FRONTEND
@@ -37,6 +38,8 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="AI Operations Room", lifespan=lifespan)
+# Reject other Host names so a DNS-rebinding page cannot reach the local API.
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
 
 
 @app.get("/api/health")

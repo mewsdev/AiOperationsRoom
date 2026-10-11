@@ -29,8 +29,10 @@ def _upsert(con: sqlite3.Connection, event: dict, *, state: str,
             parent: str | None = None, ended_by: str | None = None) -> None:
     key = key_for(event)
     when = _value(event, "t")
-    existing = con.execute("SELECT atualizado_em FROM execucao WHERE chave = ?", (key,)).fetchone()
-    if existing and existing["atualizado_em"] > when:
+    existing = con.execute("SELECT atualizado_em, estado FROM execucao WHERE chave = ?", (key,)).fetchone()
+    # An orphan is stamped with the detection time, so a real event ingested
+    # right after reconcile may look older; it still proves the run alive.
+    if existing and existing["estado"] != "orfa" and existing["atualizado_em"] > when:
         return
     kind = _value(event, "agent_type") or ("principal" if key.startswith("session:") else "subagente")
     con.execute(
@@ -38,7 +40,7 @@ def _upsert(con: sqlite3.Connection, event: dict, *, state: str,
         "origem_encerramento, criado_em, atualizado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(chave) DO UPDATE SET cwd = CASE WHEN excluded.cwd <> '' THEN excluded.cwd ELSE execucao.cwd END, "
         "estado = excluded.estado, origem_encerramento = excluded.origem_encerramento, "
-        "atualizado_em = excluded.atualizado_em",
+        "atualizado_em = MAX(execucao.atualizado_em, excluded.atualizado_em)",
         (key, event["session_id"], _value(event, "agent_id") or None, parent, kind,
          _value(event, "cwd"), state, ended_by, when, when),
     )

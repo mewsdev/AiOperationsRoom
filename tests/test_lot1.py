@@ -17,7 +17,7 @@ from backend.projects import path_key, resolve
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("AI_OPERATIONS_ROOM_DATA_DIR", str(tmp_path))
-    with TestClient(app) as test_client:
+    with TestClient(app, base_url="http://127.0.0.1") as test_client:
         yield test_client
 
 
