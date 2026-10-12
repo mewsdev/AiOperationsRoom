@@ -11,7 +11,11 @@ async function request(method, path, body) {
   return data;
 }
 
-function notice(message, error = false) { const target = $('#notice'); target.textContent = message; target.classList.toggle('error', error); target.hidden = false; }
+function notice(message, error = false, origem = '') { const target = $('#notice'); target.textContent = message; target.classList.toggle('error', error); target.dataset.origem = origem; target.hidden = false; }
+// Falha da atualização automática: some sozinha quando a conexão volta. Erros de ações do usuário continuam visíveis.
+const OFFLINE = 'Sem conexão com o servidor local. Tentando de novo a cada 4 s.';
+function refreshFailed(error) { notice(error instanceof TypeError ? OFFLINE : error.message, true, 'atualizacao'); }
+function refreshRecovered() { const target = $('#notice'); if (target.dataset.origem === 'atualizacao') { target.hidden = true; target.dataset.origem = ''; } }
 function openProject(project = null, path = '') { editingId = project?.id ?? null; $('#dialog-title').textContent = project ? 'Editar projeto' : 'Novo projeto'; $('#dialog-help').textContent = project ? 'A mudança da pasta atualiza as associações existentes.' : 'Escolha um nome curto para identificar a sala.'; $('#project-name').value = project?.nome ?? ''; $('#project-path').value = path || project?.caminho_local || ''; $('#project-dialog').showModal(); $('#project-name').focus(); }
 
 function render() {
@@ -24,7 +28,7 @@ function render() {
   $('#project-list').innerHTML = visible.length ? visible.map((project) => `<div class="row ${project.arquivado ? 'archived' : ''}"><div class="row-main"><strong>${esc(project.nome)} ${project.arquivado ? '<span class="badge">Arquivado</span>' : ''}</strong><span class="path">${esc(project.caminho_local)}</span></div><div class="actions"><button data-action="edit" data-id="${project.id}">Editar</button><button data-action="archive" data-id="${project.id}">${project.arquivado ? 'Desarquivar' : 'Arquivar'}</button><button class="danger" data-action="delete" data-id="${project.id}">Remover</button></div></div>`).join('') : '<p class="empty">Nenhum projeto nesta lista.</p>';
 }
 
-async function refresh() { try { [projects, { sessoes: sessions }] = await Promise.all([request('GET', '/projetos'), request('GET', '/sessoes')]); render(); } catch (error) { notice(error.message, true); } }
+async function refresh() { try { [projects, { sessoes: sessions }] = await Promise.all([request('GET', '/projetos'), request('GET', '/sessoes')]); render(); refreshRecovered(); } catch (error) { refreshFailed(error); } }
 $('#new-project').addEventListener('click', () => openProject());
 $('#show-archived').addEventListener('change', render);
 $('#cancel-dialog').addEventListener('click', () => $('#project-dialog').close());
