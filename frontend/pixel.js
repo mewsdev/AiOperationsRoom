@@ -792,8 +792,10 @@
   const links = new Map();
   const simbolos = new Set();
   let raf = null;
+  let janelaRaf = null;
   let ultimoQuadro = 0;
   let timerAgenda = null;
+  let janelaAgenda = null;
 
   function montar(container, dados, opcoes) {
     destruir();
@@ -812,16 +814,14 @@
     container.appendChild(svg);
     svg.addEventListener('mouseover', aoPassarMouse);
     svg.addEventListener('mouseout', aoSairMouse);
-    timerAgenda = setInterval(agenda, 700);
+    ligarAgenda();
     focoMesa = Boolean(raiz.location && /[?&]foco=mesa(&|$)/.test(raiz.location.hash || ''));
     atualizar(dados);
   }
 
   function destruir() {
-    if (timerAgenda) clearInterval(timerAgenda);
-    timerAgenda = null;
-    if (raf) cancelAnimationFrame(raf);
-    raf = null;
+    desligarAgenda();
+    cancelarQuadro();
     salas.clear();
     entidades.clear();
     links.clear();
@@ -1233,7 +1233,7 @@
      até lá. Com movimento reduzido, ninguém circula: só muda de lugar quando
      o estado obriga (encerrou, ficou órfão), e muda sem andar. */
   function agenda() {
-    if (!montado() || document.hidden) return;
+    if (!montado() || svg.ownerDocument.hidden) return;
     const agora = performance.now();
     entidades.forEach((ent) => {
       if (ent.sumindo || ent.rota || agora < ent.proxima) return;
@@ -1270,7 +1270,7 @@
     atualizarMonitores(sala);
     if (!raf) {
       ultimoQuadro = performance.now();
-      raf = requestAnimationFrame(tick);
+      pedirQuadro();
     }
   }
 
@@ -1286,7 +1286,50 @@
     atualizarMonitores(sala);
   }
 
-  function tick(agora) {
+  /* A cena pode estar numa janela picture-in-picture: quadros e agenda ficam
+     com a janela que a mostra, que segue ativa com a aba principal oculta. */
+  const janelaDaCena = () => (svg && svg.ownerDocument.defaultView) || raiz;
+
+  function ligarAgenda() {
+    janelaAgenda = janelaDaCena();
+    timerAgenda = janelaAgenda.setInterval(agenda, 700);
+  }
+
+  function desligarAgenda() {
+    try {
+      if (timerAgenda) janelaAgenda.clearInterval(timerAgenda);
+    } catch (erro) { /* janela já fechada */ }
+    timerAgenda = null;
+    janelaAgenda = null;
+  }
+
+  function pedirQuadro() {
+    janelaRaf = janelaDaCena();
+    raf = janelaRaf.requestAnimationFrame(tick);
+  }
+
+  function cancelarQuadro() {
+    try {
+      if (raf) janelaRaf.cancelAnimationFrame(raf);
+    } catch (erro) { /* janela já fechada */ }
+    raf = null;
+    janelaRaf = null;
+  }
+
+  /* Depois de a cena mudar de janela: um quadro pendente na janela antiga
+     nunca mais dispararia e o `if (!raf)` impediria pedir outro. */
+  function reancorar() {
+    if (!montado()) return;
+    desligarAgenda();
+    ligarAgenda();
+    cancelarQuadro();
+    ultimoQuadro = performance.now();
+    pedirQuadro();
+  }
+
+  function tick() {
+    // A origem de tempo do rAF muda entre janelas; performance.now() é a da cena.
+    const agora = performance.now();
     const dt = Math.min(0.1, (agora - ultimoQuadro) / 1000);
     ultimoQuadro = agora;
     let alguem = false;
@@ -1325,7 +1368,8 @@
       }
     });
     atualizarLinks();
-    raf = alguem ? requestAnimationFrame(tick) : null;
+    if (alguem) pedirQuadro();
+    else raf = janelaRaf = null;
   }
 
   /* --------------------------------------------------------------- links */
@@ -1415,6 +1459,6 @@
 
   /* ------------------------------------------------------------ exportar */
 
-  raiz.EscritorioPixel = { montar, atualizar, destruir, montado, logica, _estado: { salas, entidades } };
+  raiz.EscritorioPixel = { montar, atualizar, destruir, montado, reancorar, logica, _estado: { salas, entidades } };
   if (typeof module !== 'undefined' && module.exports) module.exports = logica;
 })(typeof window !== 'undefined' ? window : globalThis);

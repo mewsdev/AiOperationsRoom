@@ -69,6 +69,8 @@ O hook registra identificadores, tipo de agente, diretório de trabalho, razão 
 
 O Painel usa um período selecionável de 6, 12 ou 24 horas. O Escritório mostra execuções ativas e as encerradas nas últimas 12 horas; apenas sessões principais sem subagentes encerradas em menos de 30 segundos são ocultadas da sala.
 
+No Chrome e no Edge (116 ou mais recente), o botão **Janela flutuante** leva o escritório para uma janela picture-in-picture que fica sobre as outras janelas e continua atualizando com a aba em segundo plano. Fechar essa janela, ou clicar em **Voltar à página**, devolve o escritório à página. Os detalhes de um agente clicado na janela flutuante abrem na página principal. Em navegadores sem essa API, o botão não aparece.
+
 ## Sugestões de agentes
 
 Estou compartilhando também 2 agentes que eu utilizo nos meus projetos de trabalho e pessoais[SUGESTAO_DE_AGENTES.md](SUGESTAO_DE_AGENTES.md): um revisor de código e um pesquisador de contexto.

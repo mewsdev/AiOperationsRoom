@@ -12,6 +12,10 @@ let editingId = null;
 let selected = null;
 let viewMode = 'office';
 const visualRuns = new Map();
+// Guardados: no picture-in-picture eles saem deste documento.
+const officeRoom = $('#office-room');
+const operationBar = $('#operation-bar');
+const pipToggle = $('#pip-toggle');
 
 async function request(method, path, body) {
   const response = await fetch('/api' + path, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
@@ -62,8 +66,8 @@ function renderRoom() {
     ['roxo', 'Projetos ativos', new Set(dashboard.execucoes.filter((run) => ['trabalhando', 'delegando', 'aguardando'].includes(run.estado) && run.projeto_id).map((run) => run.projeto_id)).size],
   ];
   $('#office-summary').innerHTML = metrics.map(([color, label, value]) => `<article class="kpi"><span class="kpi-rotulo"><i class="ponto ${color}"></i>${label}</span><strong class="kpi-valor">${value}</strong></article>`).join('');
-  $('#operation-bar').innerHTML = `<span class="ao-vivo"><i></i>Ao vivo</span><span>${counts.sessoes_ativas || 0} sessão(ões) ativa(s)</span><span class="sep">·</span><span>${counts.execucoes_na_janela || 0} execução(ões) nas últimas ${dashboard.horas || 6} h</span><span class="meta-fim">atualiza a cada 4 s</span>`;
-  const room = $('#office-room');
+  operationBar.innerHTML = `<span class="ao-vivo"><i></i>Ao vivo</span><span>${counts.sessoes_ativas || 0} sessão(ões) ativa(s)</span><span class="sep">·</span><span>${counts.execucoes_na_janela || 0} execução(ões) nas últimas ${dashboard.horas || 6} h</span><span class="meta-fim">atualiza a cada 4 s</span>`;
+  const room = officeRoom;
   if (viewMode === 'panel') {
     if (window.EscritorioPixel?.montado()) window.EscritorioPixel.destruir();
     room.innerHTML = `<div class="panel-table" role="region" aria-label="Painel de execuções"><table><thead><tr><th>Agente</th><th>Projeto</th><th>Estado</th><th>Atualização</th></tr></thead><tbody>${(dashboard.historico || []).map((run) => `<tr data-session="${esc(run.session_id)}" tabindex="0"><td>${esc(kindLabel(run.tipo))}</td><td>${esc(run.projeto_nome || run.cwd || 'Sem projeto')}</td><td>${esc(states[run.estado] || run.estado)}</td><td>${esc(new Date(run.atualizado_em).toLocaleString('pt-BR'))}</td></tr>`).join('') || '<tr><td colspan="4">Nenhuma execução no período.</td></tr>'}</tbody></table></div>`;
@@ -105,14 +109,14 @@ $('#new-project').addEventListener('click', () => openProject());
 $('#show-archived').addEventListener('change', renderProjects);
 $('#cancel-dialog').addEventListener('click', () => $('#project-dialog').close());
 $('#project-form').addEventListener('submit', async (event) => { event.preventDefault(); try { await request(editingId ? 'PUT' : 'POST', editingId ? `/projetos/${editingId}` : '/projetos', { nome: $('#project-name').value.trim(), caminho_local: $('#project-path').value.trim() }); $('#project-dialog').close(); await refresh(); notice('Projeto salvo.'); } catch (error) { notice(error.message, true); } });
-$('#office-room').addEventListener('click', (event) => {
+officeRoom.addEventListener('click', (event) => {
   const person = event.target.closest('.pessoa');
   const run = person && visualRuns.get(person.dataset.id);
   if (run) return selectSession(run.session_id).catch((error) => notice(error.message, true));
   const card = event.target.closest('[data-session]');
   if (card) selectSession(card.dataset.session).catch((error) => notice(error.message, true));
 });
-$('#office-room').addEventListener('keydown', (event) => {
+officeRoom.addEventListener('keydown', (event) => {
   if (!['Enter', ' '].includes(event.key)) return;
   const row = event.target.closest('tr[data-session]');
   if (!row) return;
@@ -128,5 +132,53 @@ document.querySelectorAll('.alternador .botao-mini').forEach((button) => button.
 }));
 $('#history-period').addEventListener('change', refresh);
 $('#show-route').addEventListener('change', renderRoom);
+
+/* Picture-in-picture (Document PiP, Chrome e Edge 116+): o bloco do escritório
+   muda de documento e volta ao fechar a janela. */
+let pipWindow = null;
+let refreshTimer = null;
+
+function scheduleRefresh(target) {
+  try {
+    if (refreshTimer) refreshTimer.owner.clearInterval(refreshTimer.id);
+  } catch { /* janela já fechada */ }
+  refreshTimer = { owner: target, id: target.setInterval(refresh, 4000) };
+}
+
+async function openPip() {
+  const block = $('.cena-bloco');
+  const placeholder = document.createComment('cena-bloco');
+  pipWindow = await window.documentPictureInPicture.requestWindow({ width: 720, height: 520 });
+  for (const sheet of document.querySelectorAll('link[rel="stylesheet"]')) {
+    const link = pipWindow.document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = sheet.href;
+    pipWindow.document.head.append(link);
+  }
+  pipWindow.document.title = document.title;
+  pipWindow.document.body.classList.add('pip');
+  block.before(placeholder);
+  pipWindow.document.body.append(block);
+  pipToggle.textContent = 'Voltar à página';
+  // Com a aba oculta, os timers desta janela sofrem throttle; os da janela flutuante não.
+  scheduleRefresh(pipWindow);
+  window.EscritorioPixel?.reancorar();
+  pipWindow.addEventListener('pagehide', () => {
+    placeholder.replaceWith(block);
+    pipToggle.textContent = 'Janela flutuante';
+    pipWindow = null;
+    scheduleRefresh(window);
+    window.EscritorioPixel?.reancorar();
+  }, { once: true });
+}
+
+if ('documentPictureInPicture' in window) {
+  pipToggle.hidden = false;
+  pipToggle.addEventListener('click', () => {
+    if (pipWindow) pipWindow.close();
+    else openPip().catch((error) => notice(error.message, true));
+  });
+}
+
 refresh();
-setInterval(refresh, 4000);
+scheduleRefresh(window);
