@@ -748,13 +748,13 @@
   const VELOCIDADE = 26; // pixels de arte por segundo
   const PERMANENCIA = { mesa: [24000, 55000], cafe: [9000, 20000], estar: [14000, 36000] };
   const PLACA_MAX = 99; // unidades: duas placas vizinhas nunca se encostam
-  const ROTULOS = { principal: 'Claude principal', desconhecido: 'agente desconhecido' };
+  const ROTULOS = { principal: 'Claude principal', advisor: 'Advisor', desconhecido: 'agente desconhecido' };
   const rotulo = (tipo) => ROTULOS[tipo] || tipo || '?';
   const esc = (v) =>
     String(v === null || v === undefined ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const reduzido = () => raiz.matchMedia && raiz.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const FAMILIAS = [
-    ['principal', /^principal$/i], ['pesquisa', /^(explore|pesquisador|general-purpose|claude-code-guide)/i],
+    ['principal', /^principal$/i], ['advisor', /^advisor$/i], ['pesquisa', /^(explore|pesquisador|general-purpose|claude-code-guide)/i],
     ['plano', /^plan$/i], ['revisao', /^(revisor|code-review|simplify)/i],
     ['qa', /^(verificador|diagnostico|security)/i], ['dados', /^analista/i],
     ['conhecimento', /^(curador|radar|entrega)/i],
@@ -762,6 +762,7 @@
   const familiaDe = (tipo) => (FAMILIAS.find(([, pattern]) => pattern.test(String(tipo || ''))) || ['outro'])[0];
   const GLIFOS = {
     principal: '<path class="glifo cheio" d="M0 -4.2 L1.3 -1.3 L4.2 0 L1.3 1.3 L0 4.2 L-1.3 1.3 L-4.2 0 L-1.3 -1.3 Z"/>',
+    advisor: '<path class="glifo" d="M-2.2 2.6 Q-4 0.8 -4 -1 A4 4 0 0 1 4 -1 Q4 0.8 2.2 2.6 Z M-1.6 4.4 H1.6"/>',
     pesquisa: '<circle class="glifo" cx="-1.2" cy="-1.2" r="2.7"/><path class="glifo" d="M0.8 0.8 L4 4"/>',
     plano: '<path class="glifo" d="M-4 -3 H4 M-4 0 H2 M-4 3 H3"/>',
     revisao: '<path class="glifo" d="M-4 0.2 L-1.2 3 L4 -3"/>',
@@ -770,6 +771,7 @@
     conhecimento: '<path class="glifo" d="M-4 -3.5 H-0.3 V3.8 H-4 Z M0.3 -3.5 H4 V3.8 H0.3 Z"/>',
   };
   const glifoDe = (tipo) => GLIFOS[familiaDe(tipo)] || `<text class="glifo-letra" y="3.4" text-anchor="middle">${esc(tipo === 'principal' ? 'C' : String(tipo || '?').slice(0, 1).toUpperCase())}</text>`;
+  Object.assign(logica, { familiaDe, rotulo });
 
   function svgEl(nome, atributos, classe) {
     const el = document.createElementNS(NS, nome);
@@ -790,8 +792,10 @@
   const links = new Map();
   const simbolos = new Set();
   let raf = null;
+  let janelaRaf = null;
   let ultimoQuadro = 0;
   let timerAgenda = null;
+  let janelaAgenda = null;
 
   function montar(container, dados, opcoes) {
     destruir();
@@ -810,16 +814,14 @@
     container.appendChild(svg);
     svg.addEventListener('mouseover', aoPassarMouse);
     svg.addEventListener('mouseout', aoSairMouse);
-    timerAgenda = setInterval(agenda, 700);
+    ligarAgenda();
     focoMesa = Boolean(raiz.location && /[?&]foco=mesa(&|$)/.test(raiz.location.hash || ''));
     atualizar(dados);
   }
 
   function destruir() {
-    if (timerAgenda) clearInterval(timerAgenda);
-    timerAgenda = null;
-    if (raf) cancelAnimationFrame(raf);
-    raf = null;
+    desligarAgenda();
+    cancelarQuadro();
     salas.clear();
     entidades.clear();
     links.clear();
@@ -1231,7 +1233,7 @@
      até lá. Com movimento reduzido, ninguém circula: só muda de lugar quando
      o estado obriga (encerrou, ficou órfão), e muda sem andar. */
   function agenda() {
-    if (!montado() || document.hidden) return;
+    if (!montado() || svg.ownerDocument.hidden) return;
     const agora = performance.now();
     entidades.forEach((ent) => {
       if (ent.sumindo || ent.rota || agora < ent.proxima) return;
@@ -1268,7 +1270,7 @@
     atualizarMonitores(sala);
     if (!raf) {
       ultimoQuadro = performance.now();
-      raf = requestAnimationFrame(tick);
+      pedirQuadro();
     }
   }
 
@@ -1284,7 +1286,50 @@
     atualizarMonitores(sala);
   }
 
-  function tick(agora) {
+  /* A cena pode estar numa janela picture-in-picture: quadros e agenda ficam
+     com a janela que a mostra, que segue ativa com a aba principal oculta. */
+  const janelaDaCena = () => (svg && svg.ownerDocument.defaultView) || raiz;
+
+  function ligarAgenda() {
+    janelaAgenda = janelaDaCena();
+    timerAgenda = janelaAgenda.setInterval(agenda, 700);
+  }
+
+  function desligarAgenda() {
+    try {
+      if (timerAgenda) janelaAgenda.clearInterval(timerAgenda);
+    } catch (erro) { /* janela já fechada */ }
+    timerAgenda = null;
+    janelaAgenda = null;
+  }
+
+  function pedirQuadro() {
+    janelaRaf = janelaDaCena();
+    raf = janelaRaf.requestAnimationFrame(tick);
+  }
+
+  function cancelarQuadro() {
+    try {
+      if (raf) janelaRaf.cancelAnimationFrame(raf);
+    } catch (erro) { /* janela já fechada */ }
+    raf = null;
+    janelaRaf = null;
+  }
+
+  /* Depois de a cena mudar de janela: um quadro pendente na janela antiga
+     nunca mais dispararia e o `if (!raf)` impediria pedir outro. */
+  function reancorar() {
+    if (!montado()) return;
+    desligarAgenda();
+    ligarAgenda();
+    cancelarQuadro();
+    ultimoQuadro = performance.now();
+    pedirQuadro();
+  }
+
+  function tick() {
+    // A origem de tempo do rAF muda entre janelas; performance.now() é a da cena.
+    const agora = performance.now();
     const dt = Math.min(0.1, (agora - ultimoQuadro) / 1000);
     ultimoQuadro = agora;
     let alguem = false;
@@ -1323,7 +1368,8 @@
       }
     });
     atualizarLinks();
-    raf = alguem ? requestAnimationFrame(tick) : null;
+    if (alguem) pedirQuadro();
+    else raf = janelaRaf = null;
   }
 
   /* --------------------------------------------------------------- links */
@@ -1413,6 +1459,6 @@
 
   /* ------------------------------------------------------------ exportar */
 
-  raiz.EscritorioPixel = { montar, atualizar, destruir, montado, logica, _estado: { salas, entidades } };
+  raiz.EscritorioPixel = { montar, atualizar, destruir, montado, reancorar, logica, _estado: { salas, entidades } };
   if (typeof module !== 'undefined' && module.exports) module.exports = logica;
 })(typeof window !== 'undefined' ? window : globalThis);

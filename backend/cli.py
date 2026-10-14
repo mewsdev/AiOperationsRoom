@@ -101,6 +101,8 @@ def demo_events() -> list[dict]:
         {"id": "demo-01", "evento": "SessionStart", "session_id": "demo-atlas", "cwd": "/demo/atlas", "t": at(-12)},
         {"id": "demo-02", "evento": "UserPromptSubmit", "session_id": "demo-atlas", "cwd": "/demo/atlas", "t": at(-11)},
         {"id": "demo-03", "evento": "SubagentStart", "session_id": "demo-atlas", "agent_id": "demo-review", "agent_type": "reviewer", "cwd": "/demo/atlas", "t": at(-8)},
+        {"id": "demo-09", "evento": "AdvisorStart", "session_id": "demo-atlas", "advisor_id": "demo-advisor", "cwd": "/demo/atlas", "t": at(-10)},
+        {"id": "demo-10", "evento": "AdvisorStop", "session_id": "demo-atlas", "advisor_id": "demo-advisor", "cwd": "/demo/atlas", "t": at(-9)},
         {"id": "demo-04", "evento": "SessionStart", "session_id": "demo-orion", "cwd": "/demo/orion", "t": at(-10)},
         {"id": "demo-05", "evento": "Stop", "session_id": "demo-orion", "cwd": "/demo/orion", "t": at(-2)},
         {"id": "demo-06", "evento": "SessionStart", "session_id": "demo-aurora", "cwd": "/demo/aurora", "t": at(-30)},

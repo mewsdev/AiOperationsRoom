@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -210,3 +211,79 @@ def test_demo_stays_active_and_reseeding_refreshes_timestamps(monkeypatch, tmp_p
         renewed = client.get("/api/painel").json()
         atlas = next(item for item in renewed["execucoes"] if item["session_id"] == "demo-atlas" and not item["pai_chave"])
         assert atlas["criado_em"] != original_start
+
+
+def test_advisor_is_a_child_that_never_holds_the_main_in_delegation(monkeypatch, tmp_path):
+    monkeypatch.setenv("AI_OPERATIONS_ROOM_DATA_DIR", str(tmp_path))
+    add_events(
+        {"id": "1", "evento": "UserPromptSubmit", "session_id": "adv", "cwd": "/work/adv", "t": at(-5)},
+        {"id": "2", "evento": "AdvisorStart", "session_id": "adv", "advisor_id": "srv1", "cwd": "/work/adv", "t": at(-4)},
+        {"id": "3", "evento": "SubagentStart", "session_id": "adv", "agent_id": "a", "agent_type": "Explore", "t": at(-4)},
+        {"id": "4", "evento": "AdvisorStart", "session_id": "adv", "agent_id": "a", "advisor_id": "srv2", "t": at(-3)},
+        {"id": "5", "evento": "AdvisorStop", "session_id": "adv", "advisor_id": "srv1", "cwd": "/work/adv", "t": at(-3)},
+        {"id": "6", "evento": "AdvisorStart", "session_id": "adv", "advisor_id": "srv1", "cwd": "/work/adv", "t": at(-3)},
+        {"id": "7", "evento": "SubagentStop", "session_id": "adv", "agent_id": "a", "agent_type": "Explore", "t": at(-2)},
+        {"id": "8", "evento": "AdvisorStart", "session_id": "adv", "advisor_id": "srv3", "cwd": "/work/adv", "t": at(-2)},
+        {"id": "9", "evento": "Stop", "session_id": "adv", "cwd": "/work/adv", "background_tasks": [], "t": at(-1)},
+    )
+    with TestClient(app) as client:
+        runs = {item["chave"]: item for item in client.get("/api/painel").json()["execucoes"]}
+    assert runs["session:adv"]["estado"] == "aguardando"
+    assert runs["advisor:srv1"]["pai_chave"] == "session:adv"
+    assert runs["advisor:srv1"]["tipo"] == "advisor"
+    assert runs["advisor:srv1"]["estado"] == "concluida"
+    assert runs["advisor:srv2"]["pai_chave"] == "agent:a"
+    assert runs["advisor:srv2"]["origem_encerramento"] == "SubagentStop"
+    assert runs["advisor:srv3"]["origem_encerramento"] == "Stop"
+    assert runs["agent:a"]["estado"] == "concluida"
+
+
+def test_hook_reads_advisor_calls_from_transcript_without_text(tmp_path):
+    hook = Path(__file__).resolve().parents[1] / "hooks" / "capture.py"
+    transcript = tmp_path / "session.jsonl"
+    agent = tmp_path / "agent.jsonl"
+
+    def entry(block: dict, when: str, sidechain: bool = False) -> str:
+        return json.dumps({"type": "assistant", "timestamp": when, "isSidechain": sidechain,
+                           "advisorModel": "claude-opus-5-5",
+                           "message": {"content": [{"type": "text", "text": "PRIVATE TEXT"}, block]}}) + "\n"
+
+    call = {"type": "server_tool_use", "id": "srvtoolu_1", "name": "advisor", "input": {}}
+    result = {"type": "advisor_tool_result", "tool_use_id": "srvtoolu_1",
+              "content": {"type": "advisor_result", "text": "PRIVATE ADVICE"}}
+    transcript.write_text(
+        entry({"type": "server_tool_use", "id": "srvtoolu_9", "name": "web_search"}, "2026-10-09T21:00:00.000Z")
+        + entry(call, "2026-10-09T21:58:07.270Z")
+        + entry(result, "2026-10-09T21:58:39.713Z")
+        + entry({**call, "id": "srvtoolu_side"}, "2026-10-09T21:59:00.000Z", sidechain=True)
+        + '{"partial": ', encoding="utf-8")
+    agent.write_text(entry({**call, "id": "srvtoolu_2"}, "2026-10-09T22:00:00Z", sidechain=True), encoding="utf-8")
+    env = os.environ.copy()
+    env["AI_OPERATIONS_ROOM_DATA_DIR"] = str(tmp_path)
+
+    def run(payload: dict) -> list[dict]:
+        before = (tmp_path / "events.jsonl").read_text(encoding="utf-8") if (tmp_path / "events.jsonl").exists() else ""
+        subprocess.run([sys.executable, str(hook)], input=json.dumps(payload), text=True, env=env, check=True)
+        after = (tmp_path / "events.jsonl").read_text(encoding="utf-8")
+        assert "PRIVATE" not in after
+        return [json.loads(line) for line in after[len(before):].splitlines()]
+
+    base = {"session_id": "s", "cwd": "/w", "transcript_path": str(transcript)}
+    first = run({**base, "hook_event_name": "Stop"})
+    assert [(e["evento"], e.get("advisor_id"), e["t"]) for e in first] == [
+        ("AdvisorStart", "srvtoolu_1", "2026-10-09T21:58:07+00:00"),
+        ("AdvisorStop", "srvtoolu_1", "2026-10-09T21:58:39+00:00"),
+        ("Stop", None, first[-1]["t"]),
+    ]
+    assert first[0]["advisor_model"] == "claude-opus-5-5"
+    assert "agent_id" not in first[0]
+    # The cursor skips what was read; the partial last line is read once complete.
+    transcript.write_text(transcript.read_text(encoding="utf-8")[:-len('{"partial": ')]
+                          + entry({**call, "id": "srvtoolu_3"}, "2026-10-09T22:01:00Z"), encoding="utf-8")
+    second = run({**base, "hook_event_name": "UserPromptSubmit"})
+    assert [(e["evento"], e.get("advisor_id")) for e in second] == [
+        ("AdvisorStart", "srvtoolu_3"), ("UserPromptSubmit", None)]
+    sub = run({**base, "hook_event_name": "SubagentStop", "agent_id": "a1",
+               "agent_transcript_path": str(agent)})
+    assert [(e["evento"], e.get("advisor_id"), e.get("agent_id")) for e in sub] == [
+        ("AdvisorStart", "srvtoolu_2", "a1"), ("SubagentStop", None, "a1")]

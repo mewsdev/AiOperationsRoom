@@ -1,6 +1,6 @@
 # AI Operations Room
 
-Uma sala local para acompanhar sessões e subagentes do Claude Code. O aplicativo recebe somente metadados de hooks, mantém os dados em SQLite local e serve a interface em `127.0.0.1`.
+Uma sala local para acompanhar sessões, subagentes e consultas ao advisor do Claude Code. O aplicativo recebe somente metadados de hooks, mantém os dados em SQLite local e serve a interface em `127.0.0.1`.
 
 ## Requisitos
 
@@ -54,6 +54,8 @@ Use `--port 8876` em qualquer comando de servidor quando a porta padrão já est
 
 O registro altera `~/.claude/settings.json`: adiciona um command hook para `SessionStart`, `UserPromptSubmit`, `Stop`, `SubagentStart`, `SubagentStop` e `SessionEnd`. Antes de alterar o arquivo, revise seu conteúdo.
 
+As consultas ao advisor não têm hook próprio: o hook lê do transcript da sessão apenas o id e o horário de cada chamada e as mostra como um agente `Advisor` ligado a quem o consultou. Elas aparecem no próximo hook da sessão (no mais tardar, no fim do turno) ou quando o subagente termina, não em tempo real. Detalhes em [ARCHITECTURE.md](ARCHITECTURE.md#advisor).
+
 ```powershell
 uv run python -m backend.cli hooks-install
 uv run python -m backend.cli hooks-remove
@@ -66,6 +68,8 @@ No Windows, `hooks-install` registra PowerShell explicitamente e também corrige
 O hook registra identificadores, tipo de agente, diretório de trabalho, razão de encerramento e a hora do evento. Ele não salva prompts, respostas nem transcrições. Para detectar sessões interrompidas sem hook de encerramento, o servidor consulta o identificador da sessão e o PID em `~/.claude/sessions`; não copia o conteúdo desses arquivos para o banco. Os dados ficam por padrão em `~/.ai-operations-room`; defina `AI_OPERATIONS_ROOM_DATA_DIR` para usar outra pasta.
 
 O Painel usa um período selecionável de 6, 12 ou 24 horas. O Escritório mostra execuções ativas e as encerradas nas últimas 12 horas; apenas sessões principais sem subagentes encerradas em menos de 30 segundos são ocultadas da sala.
+
+No Chrome e no Edge (116 ou mais recente), o botão **Janela flutuante** leva o escritório para uma janela picture-in-picture que fica sobre as outras janelas e continua atualizando com a aba em segundo plano. Fechar essa janela, ou clicar em **Voltar à página**, devolve o escritório à página. Os detalhes de um agente clicado na janela flutuante abrem na página principal. Em navegadores sem essa API, o botão não aparece.
 
 ## Sugestões de agentes
 

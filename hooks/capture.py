@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -32,6 +33,82 @@ def normalize(payload: dict) -> dict:
     return event
 
 
+def _transcript_events(path: object, payload: dict, sidechain: bool) -> tuple[list[dict], tuple | None]:
+    """Advisor calls are server tools: no hook fires for them, so read their
+    id and timestamps from the transcript. The advisor text is never kept."""
+    if not isinstance(path, str) or not path:
+        return [], None
+    transcript = Path(path).expanduser()
+    cursors = data_dir() / "advisor-cursors"
+    cursor = cursors / (hashlib.sha256(str(transcript).encode("utf-8")).hexdigest()[:32] + ".json")
+    try:
+        saved = json.loads(cursor.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        saved = {}
+    offset = saved.get("offset") if isinstance(saved, dict) else 0
+    offset = offset if isinstance(offset, int) else 0
+    events = []
+    with transcript.open("rb") as stream:
+        if stream.seek(0, 2) < offset:
+            offset = 0
+        stream.seek(offset)
+        for raw in stream:
+            if not raw.endswith(b"\n"):
+                break
+            offset += len(raw)
+            if b"srvtoolu_" not in raw:
+                continue
+            try:
+                entry = json.loads(raw.decode("utf-8"))
+                blocks = entry["message"]["content"]
+            except (ValueError, KeyError, TypeError):
+                continue
+            if not isinstance(blocks, list) or bool(entry.get("isSidechain")) != sidechain:
+                continue
+            try:
+                # Same format as the hook's own "t", so stored times compare as text.
+                when = datetime.fromisoformat(str(entry["timestamp"]).replace("Z", "+00:00"))
+                when = when.astimezone(timezone.utc).isoformat(timespec="seconds")
+            except (KeyError, ValueError):
+                continue
+            for block in blocks:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "server_tool_use" and block.get("name") == "advisor":
+                    name, call = "AdvisorStart", block.get("id")
+                elif block.get("type") == "advisor_tool_result":
+                    name, call = "AdvisorStop", block.get("tool_use_id")
+                else:
+                    continue
+                if not isinstance(call, str) or not call:
+                    continue
+                event = {key: payload[key] for key in ("session_id", "cwd", "agent_id") if key in payload}
+                event.update({"evento": name, "id": f"{name}:{call}", "advisor_id": call, "t": when})
+                model = entry.get("advisorModel")
+                if isinstance(model, str) and model:
+                    event["advisor_model"] = model
+                events.append(event)
+    return events, (cursor, offset)
+
+
+def advisor_events(payload: dict) -> tuple[list[dict], tuple | None]:
+    try:
+        if payload.get("hook_event_name") == "SubagentStop":
+            return _transcript_events(payload.get("agent_transcript_path"), payload, True)
+        main = {key: value for key, value in payload.items() if key != "agent_id"}
+        return _transcript_events(payload.get("transcript_path"), main, False)
+    except Exception:
+        return [], None
+
+
+def save_cursor(cursor: tuple | None) -> None:
+    """Saved only after the queue write; ids are stable, so rereading is harmless."""
+    if cursor:
+        path, offset = cursor
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"offset": offset}), encoding="utf-8")
+
+
 def main() -> int:
     try:
         payload = json.loads(sys.stdin.read() or "{}")
@@ -39,8 +116,12 @@ def main() -> int:
             return 0
         path = data_dir()
         path.mkdir(parents=True, exist_ok=True)
+        # Advisor calls first: they happened before the event that revealed them.
+        advisor, cursor = advisor_events(payload)
+        lines = [*advisor, normalize(payload)]
         with (path / "events.jsonl").open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps(normalize(payload), ensure_ascii=False) + "\n")
+            stream.write("".join(json.dumps(line, ensure_ascii=False) + "\n" for line in lines))
+        save_cursor(cursor)
     except Exception:
         pass  # A hook must never interrupt Claude Code.
     return 0

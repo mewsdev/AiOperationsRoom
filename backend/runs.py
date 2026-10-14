@@ -7,6 +7,7 @@ import sqlite3
 
 
 ACTIVE = {"trabalhando", "delegando", "aguardando"}
+ADVISOR = "advisor"
 
 
 def key_for(event: dict) -> str:
@@ -52,10 +53,43 @@ def _set_main(con: sqlite3.Connection, event: dict, state: str, ended_by: str | 
 
 
 def _active_children(con: sqlite3.Connection, session_id: str) -> int:
+    # An advisor consultation is part of its caller's turn, not a delegation.
     return con.execute(
-        "SELECT COUNT(*) FROM execucao WHERE session_id = ? AND pai_chave IS NOT NULL "
-        "AND estado IN ('trabalhando', 'delegando', 'aguardando')", (session_id,)
+        "SELECT COUNT(*) FROM execucao WHERE session_id = ? AND pai_chave IS NOT NULL AND tipo <> ? "
+        "AND estado IN ('trabalhando', 'delegando', 'aguardando')", (session_id, ADVISOR)
     ).fetchone()[0]
+
+
+def _advisor(con: sqlite3.Connection, event: dict, state: str) -> None:
+    advisor_id = _value(event, "advisor_id")
+    if not advisor_id:
+        return
+    if not con.execute("SELECT 1 FROM execucao WHERE chave = ?", (main_key(event["session_id"]),)).fetchone():
+        _set_main(con, event, "trabalhando")
+    parent = key_for(event)
+    key = f"advisor:{advisor_id}"
+    when = _value(event, "t")
+    existing = con.execute("SELECT estado, atualizado_em FROM execucao WHERE chave = ?", (key,)).fetchone()
+    # Start and result often share the same second; a start never reopens a call.
+    if existing and (existing["atualizado_em"] > when or
+                     (state != "concluida" and existing["estado"] not in ACTIVE)):
+        return
+    con.execute(
+        "INSERT INTO execucao (chave, session_id, agent_id, pai_chave, tipo, cwd, estado, "
+        "origem_encerramento, criado_em, atualizado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(chave) DO UPDATE SET estado = excluded.estado, "
+        "origem_encerramento = excluded.origem_encerramento, atualizado_em = excluded.atualizado_em",
+        (key, event["session_id"], advisor_id, parent, ADVISOR, _value(event, "cwd"), state,
+         "AdvisorStop" if state == "concluida" else None, when, when),
+    )
+
+
+def _close_advisors(con: sqlite3.Connection, parent: str, when: str, ended_by: str) -> None:
+    con.execute(
+        "UPDATE execucao SET estado = 'concluida', origem_encerramento = ?, atualizado_em = ? "
+        "WHERE pai_chave = ? AND tipo = ? AND estado IN ('trabalhando', 'delegando', 'aguardando') "
+        "AND atualizado_em <= ?", (ended_by, when, parent, ADVISOR, when),
+    )
 
 
 def apply(con: sqlite3.Connection, event: dict) -> None:
@@ -67,7 +101,12 @@ def apply(con: sqlite3.Connection, event: dict) -> None:
     elif name == "SubagentStart":
         _set_main(con, event, "delegando")
         _upsert(con, event, state="trabalhando", parent=main_key(event["session_id"]))
+    elif name == "AdvisorStart":
+        _advisor(con, event, "trabalhando")
+    elif name == "AdvisorStop":
+        _advisor(con, event, "concluida")
     elif name == "SubagentStop":
+        _close_advisors(con, key_for(event), _value(event, "t"), "SubagentStop")
         if not con.execute("SELECT 1 FROM execucao WHERE chave = ?", (main_key(event["session_id"]),)).fetchone():
             _set_main(con, event, "aguardando")
         _upsert(con, event, state="concluida", parent=main_key(event["session_id"]), ended_by="SubagentStop")
@@ -80,7 +119,8 @@ def apply(con: sqlite3.Connection, event: dict) -> None:
             listed = {str(task["id"]) for task in tasks if isinstance(task, dict) and task.get("id")}
             for child in con.execute(
                 "SELECT chave, agent_id FROM execucao WHERE session_id = ? AND pai_chave IS NOT NULL "
-                "AND estado IN ('trabalhando', 'delegando', 'aguardando')", (event["session_id"],)
+                "AND tipo <> ? AND estado IN ('trabalhando', 'delegando', 'aguardando')",
+                (event["session_id"], ADVISOR)
             ).fetchall():
                 if child["agent_id"] not in listed:
                     con.execute(
@@ -88,6 +128,7 @@ def apply(con: sqlite3.Connection, event: dict) -> None:
                         "atualizado_em = ? WHERE chave = ? AND atualizado_em <= ?",
                         (_value(event, "t"), child["chave"], _value(event, "t")),
                     )
+        _close_advisors(con, main_key(event["session_id"]), _value(event, "t"), "Stop")
         _set_main(con, event, "delegando" if _active_children(con, event["session_id"]) else "aguardando")
     elif name == "SessionEnd":
         _set_main(con, event, "concluida", _value(event, "reason") or "SessionEnd")

@@ -211,3 +211,9 @@ test('nove execuções ativas dimensionam a sala com mesas suficientes', () => {
   const plano = px.planejarSala({ ativos: sala.ativos, total: sala.execucoes.length }, LARGURA);
   assert.ok(plano.vagas.filter((vaga) => vaga.zona === 'mesa').length >= 9);
 });
+
+test('advisor tem família, crachá e rótulo próprios', () => {
+  assert.equal(px.familiaDe('advisor'), 'advisor');
+  assert.equal(px.rotulo('advisor'), 'Advisor');
+  assert.equal(px.familiaDe('advisor-de-codigo'), 'outro');
+});
